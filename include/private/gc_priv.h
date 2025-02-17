@@ -2452,8 +2452,19 @@ GC_INNER void * GC_generic_malloc_inner(size_t lb, int k);
                                 /* while it is live.                    */
 #endif
 
+struct collect_expand_retry_s {
+  word prev_gc_no;
+  word prev_heapsize;
+# ifdef USE_MUNMAP
+    word prev_unmapped;
+# endif
+  int total_cnt; /* total number of attempts */
+  int stuck_cnt; /* number of subsequent attempts with no progress */
+};
+
 GC_INNER GC_bool GC_collect_or_expand(word needed_blocks,
-                                      GC_bool ignore_off_page, GC_bool retry);
+                                      GC_bool ignore_off_page,
+                                      struct collect_expand_retry_s *p_retry);
 
 GC_INNER ptr_t GC_allocobj(size_t sz, int kind);
                                 /* Make the indicated                   */
