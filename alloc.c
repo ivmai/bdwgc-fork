@@ -1668,19 +1668,57 @@ GC_API GC_word GC_CALL GC_get_allocd_bytes_per_finalizer(void)
 static word last_fo_entries = 0;
 static word last_bytes_finalized = 0;
 
+/* Maximum number of subsequent GC_collect_or_expand attempts that make */
+/* no progress (i.e. no collection is completed, the heap is not        */
+/* expanded and the amount of unmapped memory does not change) while    */
+/* the free list is still empty.  Exceeding this value means something  */
+/* is wrong in the collector or its usage is incorrect.                 */
+#define MAX_ALLOCOBJ_STUCK_RETRIES 3
+
+/* Similar to MAX_ALLOCOBJ_STUCK_RETRIES but for the maximum total      */
+/* number of subsequent attempts, even if every attempt makes some      */
+/* progress.  This is a safety net against endless heap expansion       */
+/* without ever satisfying the request; the default value is proven to  */
+/* be enough in practice.                                               */
+#ifndef MAX_ALLOCOBJ_RETRIES
+# define MAX_ALLOCOBJ_RETRIES 100
+#endif
+
 /* Collect or expand heap in an attempt make the indicated number of    */
 /* free blocks available.  Should be called until the blocks are        */
 /* available (setting retry value to TRUE unless this is the first call */
-/* in a loop) or until it fails by returning FALSE.                     */
+/* in a loop) or until it fails by returning FALSE.  (*p_retry) should  */
+/* be cleared before the first call in a loop.                          */
 GC_INNER GC_bool GC_collect_or_expand(word needed_blocks,
                                       GC_bool ignore_off_page,
-                                      GC_bool retry)
+                                      struct collect_expand_retry_s *p_retry)
 {
     GC_bool gc_not_stopped = TRUE;
     word blocks_to_get;
     IF_CANCEL(int cancel_state;)
 
     GC_ASSERT(I_HOLD_LOCK());
+    /* Allow to repeat the request as long as this function is making   */
+    /* progress (a new collection is completed, the heap is expanded or */
+    /* the amount of unmapped memory changes).                          */
+    if (p_retry -> stuck_cnt >= MAX_ALLOCOBJ_STUCK_RETRIES
+        || p_retry -> total_cnt >= MAX_ALLOCOBJ_RETRIES)
+      ABORT("Too many retries to collect/expand");
+    if (p_retry -> prev_gc_no == GC_gc_no
+#       ifdef USE_MUNMAP
+          && p_retry -> prev_unmapped == GC_unmapped_bytes
+#       endif
+        && p_retry -> prev_heapsize == GC_heapsize) {
+      p_retry -> stuck_cnt++;
+    } else {
+      p_retry -> stuck_cnt = 0;
+    }
+    p_retry -> prev_gc_no = GC_gc_no;
+#   ifdef USE_MUNMAP
+      p_retry -> prev_unmapped = GC_unmapped_bytes;
+#   endif
+    p_retry -> prev_heapsize = GC_heapsize;
+
     DISABLE_CANCEL(cancel_state);
     if (!GC_incremental && !GC_dont_gc &&
         ((GC_dont_expand && GC_bytes_allocd > 0)
@@ -1693,14 +1731,16 @@ GC_INNER GC_bool GC_collect_or_expand(word needed_blocks,
       /* nothing has been allocated since the latest collection or heap */
       /* expansion is disabled).                                        */
       gc_not_stopped = GC_try_to_collect_inner(
-                        GC_bytes_allocd > 0 && (!GC_dont_expand || !retry) ?
+                        GC_bytes_allocd > 0
+                          && (!GC_dont_expand || 0 == p_retry -> total_cnt) ?
                         GC_default_stop_func : GC_never_stop_func);
-      if (gc_not_stopped == TRUE || !retry) {
+      if (gc_not_stopped == TRUE || 0 == p_retry -> total_cnt) {
         /* Either the collection hasn't been aborted or this is the     */
         /* first attempt (in a loop).                                   */
         last_fo_entries = GC_fo_entries;
         last_bytes_finalized = GC_bytes_finalized;
         RESTORE_CANCEL(cancel_state);
+        p_retry -> total_cnt++;
         return(TRUE);
       }
     }
@@ -1729,6 +1769,7 @@ GC_INNER GC_bool GC_collect_or_expand(word needed_blocks,
         blocks_to_get = divHBLKSZ(GC_WORD_MAX);
     }
 
+    p_retry -> total_cnt++;
     if (!GC_expand_hp_inner(blocks_to_get)
         && (blocks_to_get == needed_blocks
             || !GC_expand_hp_inner(needed_blocks))) {
@@ -1764,13 +1805,15 @@ GC_INNER GC_bool GC_collect_or_expand(word needed_blocks,
  */
 GC_INNER ptr_t GC_allocobj(size_t gran, int kind)
 {
+    struct collect_expand_retry_s retry_info;
     void ** flh = &(GC_obj_kinds[kind].ok_freelist[gran]);
     GC_bool tried_minor = FALSE;
-    GC_bool retry = FALSE;
 
     GC_ASSERT(I_HOLD_LOCK());
     if (gran == 0) return(0);
 
+    BZERO(&retry_info, sizeof(retry_info));
+    /* Only a few iterations happen typically.  */
     while (*flh == 0) {
       ENTER_GC();
 #     ifndef GC_DISABLE_INCREMENTAL
@@ -1802,11 +1845,10 @@ GC_INNER ptr_t GC_allocobj(size_t gran, int kind)
             GC_collect_a_little_inner(1);
             tried_minor = TRUE;
           } else {
-            if (!GC_collect_or_expand(1, FALSE, retry)) {
+            if (!GC_collect_or_expand(1, FALSE, &retry_info)) {
               EXIT_GC();
               return(0);
             }
-            retry = TRUE;
           }
           EXIT_GC();
         }
