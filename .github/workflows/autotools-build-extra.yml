@@ -1,0 +1,78 @@
+# This workflow is for Autotools-based build/test with extra flags.
+name: autotools build extra
+
+on: [ push, pull_request ]
+
+jobs:
+  build:
+    name: ${{ matrix.os }} configure ${{ matrix.conf_options }} ${{ matrix.c_compiler }} ${{ matrix.conf_cflags }} ${{ matrix.cflags_extra }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+
+    strategy:
+      # Deliver the feedback for all matrix combinations.
+      fail-fast: false
+
+      matrix:
+        #os: macos-latest, ubuntu-24.04-arm, ubuntu-latest
+        include:
+        - os: ubuntu-latest
+          c_compiler: clang
+          conf_options: '--enable-cplusplus'
+        - os: ubuntu-latest
+          c_compiler: gcc
+          conf_options: '--enable-cplusplus'
+        - os: ubuntu-24.04-arm
+          c_compiler: clang
+        - os: ubuntu-24.04-arm
+          c_compiler: gcc
+        - os: ubuntu-24.04-arm
+          c_compiler: clang
+          conf_options: '--disable-shared --enable-cplusplus --enable-gc-assertions'
+          cflags_extra: '-O3'
+        - os: ubuntu-24.04-arm
+          c_compiler: gcc
+          conf_options: '--disable-gcj-support --enable-cplusplus'
+          cflags_extra: '-O3 -D SIMULATE_LOST_SIGNALS -D TEST_DUMP_REGIONS_AND_FREELIST -D TRACE_BUF'
+        - os: ubuntu-24.04-arm
+          c_compiler: gcc
+          conf_options: '--disable-threads'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Generate configure
+      run: ./autogen.sh
+
+    - name: Configure project
+      run: |
+        mkdir build
+        cd build
+        CC=${{ matrix.c_compiler }} CXX=${{ matrix.c_compiler == 'gcc' && 'g++' || 'clang++' }} CFLAGS="${{ matrix.conf_cflags }}" ../configure ${{ matrix.conf_options }} --enable-werror
+        echo "Content of config.h:"
+        cat include/config.h
+
+    - name: Build libraries
+      run: |
+        cd build
+        make -j CFLAGS_EXTRA="${{ matrix.cflags_extra }}"
+
+    - name: Build and run tests
+      run: |
+        cd build
+        make -j check CFLAGS_EXTRA="${{ matrix.cflags_extra }}"
+      # Print tests output even if some tests have failed.
+      continue-on-error: true
+
+    - name: Print tests output
+      run: |
+        cd build
+        for file in *.log; do
+          if [ "$file" != "config.log" -a "$file" != "test-suite.log" ]; then
+            echo "Content of $file:"
+            cat $file
+          fi
+        done
+
+    - name: Test enforcing mprotect-based VDB
+      run: GC_USE_GETWRITEWATCH=0 build/gctest
