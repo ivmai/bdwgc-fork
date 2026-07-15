@@ -2303,7 +2303,11 @@ EXTERN_C_BEGIN
       /* __data_start is usually defined in the target linker script.   */
       extern int __data_start[];
 #     define DATASTART ((ptr_t)__data_start)
-      extern void *__stack_base__;
+#     if defined(__NEWLIB__)
+        extern void *__stack_base__;
+#     else
+        extern int __stack_base__[];
+#     endif
 #     define STACKBOTTOM ((ptr_t)__stack_base__)
 #   endif
 # endif
@@ -2379,8 +2383,13 @@ EXTERN_C_BEGIN
       /* __data_start is usually defined in the target linker script.  */
       extern int __data_start[];
 #     define DATASTART ((ptr_t)(__data_start))
-      /* __stack_base__ is set in newlib/libc/sys/arm/crt0.S  */
-      extern void *__stack_base__;
+#     if defined(__NEWLIB__)
+        /* __stack_base__ is set in newlib/libc/sys/arm/crt0.S  */
+        extern void *__stack_base__;
+#     else
+        /* __stack_base__ is a linker script symbol.  */
+        extern int __stack_base__[];
+#     endif
 #     define STACKBOTTOM ((ptr_t)(__stack_base__))
 #   endif
 #   ifdef SYMBIAN
