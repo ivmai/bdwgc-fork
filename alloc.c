@@ -538,6 +538,7 @@ GC_notify_full_gc(void)
 
 STATIC GC_bool GC_stopped_mark(GC_stop_func stop_func);
 STATIC void GC_finish_collection(void);
+static void set_all_fl_marks(GC_bool indir_ds_only);
 
 /*
  * Initiate a garbage collection if appropriate.  Choose judiciously
@@ -570,6 +571,9 @@ GC_maybe_gc(void)
     GC_promote_black_lists();
     (void)GC_reclaim_all((GC_stop_func)0, TRUE);
     GC_clear_marks();
+    /* See the comment in `GC_try_to_collect_inner()`. */
+    if (!GC_incremental)
+      set_all_fl_marks(TRUE);
     EXIT_GC();
     GC_n_partial_gcs = 0;
     GC_is_full_gc = TRUE;
@@ -674,6 +678,17 @@ GC_try_to_collect_inner(GC_stop_func stop_func)
   }
   GC_invalidate_mark_state(); /*< flush mark stack */
   GC_clear_marks();
+  /*
+   * Pre-mark free-list objects, so that a false reference to a free-list
+   * entry cannot cause its first "pointer-sized" word (`next` link) to
+   * be misread as a type descriptor by a negative `GC_DS_PER_OBJECT` kind.
+   * The mark bit is checked before inspecting any descriptor, thus
+   * a pre-marked free object is skipped without ever dereferencing its link.
+   * Such descriptors are incompatible with the incremental mode, as of now.
+   */
+  if (!GC_incremental)
+    set_all_fl_marks(TRUE);
+
   SAVE_CALLERS_TO_LAST_STACK();
   GC_is_full_gc = TRUE;
   EXIT_GC();
@@ -1229,20 +1244,28 @@ GC_clear_fl_marks(ptr_t q)
   }
 }
 
-/* Mark all objects on the free lists for every object kind. */
+/*
+ * Mark all objects on the free lists for certain or all object kinds.
+ * If `indir_ds_only`, then only objects with the negative descriptor are
+ * processed.
+ */
 static void
-set_all_fl_marks(void)
+set_all_fl_marks(GC_bool indir_ds_only)
 {
   unsigned kind;
 
   for (kind = 0; kind < GC_n_kinds; kind++) {
-    size_t lg;
+    if (!indir_ds_only
+        || UNLIKELY(
+            IS_INDIR_PER_OBJ_DESCR(GC_obj_kinds[kind].ok_descriptor))) {
+      size_t lg;
 
-    for (lg = 1; lg <= MAXOBJGRANULES; lg++) {
-      ptr_t q = (ptr_t)GC_obj_kinds[kind].ok_freelist[lg];
+      for (lg = 1; lg <= MAXOBJGRANULES; lg++) {
+        ptr_t q = (ptr_t)GC_obj_kinds[kind].ok_freelist[lg];
 
-      if (q != NULL)
-        GC_set_fl_marks(q);
+        if (q != NULL)
+          GC_set_fl_marks(q);
+      }
     }
   }
 }
@@ -1331,7 +1354,7 @@ GC_finish_collection(void)
 #endif
   COND_DUMP;
   if (GC_find_leak_inner) {
-    set_all_fl_marks();
+    set_all_fl_marks(FALSE);
     /* This just checks; it does not really reclaim anything. */
     GC_start_reclaim(TRUE);
   }

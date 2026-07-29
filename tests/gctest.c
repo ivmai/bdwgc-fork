@@ -2165,6 +2165,8 @@ enable_incremental_mode(void)
     && !defined(GC_DISABLE_INCREMENTAL)
 #  if !defined(MAKE_BACK_GRAPH) && !defined(NO_INCREMENTAL)   \
       && !(defined(USE_PROC_FOR_LIBRARIES) && defined(LINUX)) \
+      && !(defined(GC_GCJ_SUPPORT)                            \
+           && GC_GCJ_MARK_DESCR_OFFSET > GC_SIZEOF_PTR)       \
       && !defined(REDIRECT_MALLOC)
   {
     unsigned vdbs = (unsigned)COVERT_DATAFLOW(GC_get_supported_vdbs());

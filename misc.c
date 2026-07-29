@@ -973,6 +973,24 @@ GC_get_supported_vdbs(void)
 }
 
 #ifndef GC_DISABLE_INCREMENTAL
+/*
+ * Check if any registered object kind has a negative `GC_DS_PER_OBJECT`
+ * descriptor (with the offset large enough that a free-list `next` link is
+ * likely to be misinterpreted as a type descriptor).  Such descriptors are
+ * incompatible with the incremental mode.
+ */
+static GC_bool
+has_obj_kinds_with_indir_descr(void)
+{
+  unsigned kind;
+
+  for (kind = 0; kind < GC_n_kinds; kind++) {
+    if (UNLIKELY(IS_INDIR_PER_OBJ_DESCR(GC_obj_kinds[kind].ok_descriptor)))
+      return TRUE;
+  }
+  return FALSE;
+}
+
 static void
 set_incremental_mode_on(void)
 {
@@ -1449,7 +1467,9 @@ GC_init(void)
     GC_init_linux_data_start();
 #endif
 #ifndef GC_DISABLE_INCREMENTAL
-  if (GC_incremental || GETENV("GC_ENABLE_INCREMENTAL") != NULL) {
+  if (GC_incremental
+      || (GETENV("GC_ENABLE_INCREMENTAL") != NULL
+          && !has_obj_kinds_with_indir_descr())) {
     set_incremental_mode_on();
     GC_ASSERT(0 == GC_bytes_allocd);
   }
@@ -1579,14 +1599,14 @@ GC_init(void)
 GC_API void GC_CALL
 GC_enable_incremental(void)
 {
-#if !defined(GC_DISABLE_INCREMENTAL) && !defined(KEEP_BACK_PTRS)
-  /*
-   * If we are keeping back pointers, the collector itself dirties all pages
-   * on which objects have been marked, making the incremental collection
-   * pointless.
-   */
+#ifndef GC_DISABLE_INCREMENTAL
   if (!GC_find_leak_inner && NULL == GETENV("GC_DISABLE_INCREMENTAL")) {
     LOCK();
+    if (has_obj_kinds_with_indir_descr()) {
+      UNLOCK();
+      GC_init();
+      return;
+    }
     if (!GC_incremental) {
       GC_setpagesize();
       /* TODO: Should we skip enabling incremental if win32s? */
@@ -2442,6 +2462,17 @@ GC_new_kind_inner(void **fl, GC_word descr, int adjust, int clear)
   GC_ASSERT(1 == clear || (0 == descr && !adjust && !clear));
   if (result < MAXOBJKINDS) {
     GC_ASSERT(result > 0);
+#ifndef GC_DISABLE_INCREMENTAL
+    /*
+     * Negative `GC_DS_PER_OBJECT` descriptors (with offsets larger than
+     * the size of a pointer) are incompatible with the incremental mode,
+     * because free-list `next` links can be misread as type descriptors
+     * during rescan of dirty pages.
+     * TODO: Turn off the incremental mode instead of abort.
+     */
+    if (GC_incremental && UNLIKELY(IS_INDIR_PER_OBJ_DESCR(descr)))
+      ABORT("Incremental GC is incompatible with negative descriptors");
+#endif
     GC_n_kinds++;
     GC_obj_kinds[result].ok_freelist = fl;
     GC_obj_kinds[result].ok_reclaim_list = 0;

@@ -3235,6 +3235,17 @@ void GC_check_fl_marks(void **);
 #endif
 
 /*
+ * Is this a negative descriptor with an offset larger than a pointer size?
+ * (A negative `GC_DS_PER_OBJECT` descriptor is the only kind that has
+ * a negative numeric value, so a single signed comparison suffices to
+ * identify those with an offset larger than a pointer size.)
+ */
+#define IS_INDIR_PER_OBJ_DESCR(d)                             \
+  (((d) & (SIGNB | GC_DS_TAGS)) == (SIGNB | GC_DS_PER_OBJECT) \
+   && (d) <= ~(word)sizeof(ptr_t)                             \
+                 - (GC_INDIR_PER_OBJ_BIAS - GC_DS_PER_OBJECT))
+
+/*
  * Add [`b`,`e`) to the root set.  Adding the same interval a second
  * time is a moderately fast no-op, and hence benign.  We do not handle
  * different but overlapping intervals efficiently.  (But we do handle
