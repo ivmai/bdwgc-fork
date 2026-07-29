@@ -383,6 +383,11 @@ jobs:
           - os: ubuntu-latest
             conf_options: --enable-gc-assertions
             cflags_extra: >-
+              -D _FORTIFY_SOURCE=2 -D GC_GCJ_MARK_DESCR_OFFSET=32 -m32
+            install_multilib: true
+          - os: ubuntu-latest
+            conf_options: --enable-gc-assertions
+            cflags_extra: >-
               -D MARK_BIT_PER_OBJ -D USE_CUSTOM_SPECIFIC
               -D _FORTIFY_SOURCE=2 -m32
             install_multilib: true
@@ -432,12 +437,6 @@ jobs:
             #     -D NO_INCREMENTAL -D TEST_FORK_WITHOUT_ATFORK
             #     -fno-omit-frame-pointer -fsanitize=thread
             #   fetch_libatomic_ops: true
-            # FIXME: Assertion violation about length-based descriptor
-            # - os: ubuntu-latest
-            #   conf_options: --enable-gc-assertions
-            #   cflags_extra: >-
-            #     -D GC_GCJ_MARK_DESCR_OFFSET=32 -D _FORTIFY_SOURCE=2 -m32
-            #   install_multilib: true
             # FIXME: Signals delivery fails constantly.
             # - os: ubuntu-latest
             #   conf_options: --disable-shared
