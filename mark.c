@@ -1843,7 +1843,15 @@ STATIC void GC_push_marked(struct hblk *h, hdr *hhdr)
         lim = (ptr_t)((word)(h + 1)->hb_body - sz);
     }
 
-    switch(BYTES_TO_GRANULES(sz)) {
+    /* The accelerated paths below ignore hb_descr and just scan every  */
+    /* word of the object conservatively.  That is a safe superset for  */
+    /* length and bitmap descriptors, but not for a mark procedure:     */
+    /* it may derive referents that are not stored as plain aligned     */
+    /* pointers.  Force such blocks down the general path which honors  */
+    /* the descriptor.                                                  */
+    switch (EXPECT((hhdr -> hb_descr & GC_DS_TAGS) == GC_DS_PROC, FALSE)
+                ? 0
+                : BYTES_TO_GRANULES(sz)) {
 #   if defined(USE_PUSH_MARKED_ACCELERATORS)
      case 1:
        GC_push_marked1(h, hhdr);
