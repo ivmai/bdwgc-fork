@@ -1257,6 +1257,27 @@ GC_INNER void GC_mark_init(void)
     alloc_mark_stack(INITIAL_MARK_STACK_SIZE);
 }
 
+GC_INNER void
+GC_mark_stack_remove_range(ptr_t b, ptr_t e)
+{
+    mse *entry = GC_mark_stack;
+    mse *mark_stack_top = GC_mark_stack_top;
+
+    GC_ASSERT(I_HOLD_LOCK());
+    GC_ASSERT(b != NULL && (word)b < (word)e);
+    while ((word)mark_stack_top >= (word)entry) {
+        if ((word)(entry -> mse_start) >= (word)b
+            && (word)(entry -> mse_start) < (word)e) {
+          entry -> mse_start = mark_stack_top -> mse_start;
+          entry -> mse_descr = mark_stack_top -> mse_descr;
+          mark_stack_top--;
+        } else {
+          entry++;
+        }
+    }
+    GC_mark_stack_top = mark_stack_top;
+}
+
 /*
  * Push all locations between b and t onto the mark stack.
  * b is the first location to be checked. t is one past the last

@@ -676,6 +676,15 @@ GC_API void GC_CALL GC_free(void * p)
         if (nblocks > 1) {
           GC_large_allocd_bytes -= nblocks * HBLKSIZE;
         }
+        /* Incremental marking can leave this object on the mark stack  */
+        /* while the mutator explicitly frees it.  Releasing its blocks */
+        /* invalidates the header needed by a custom mark procedure,    */
+        /* and reallocation can give the same address with a different  */
+        /* descriptor.  Drop pending scans of this object before its    */
+        /* storage becomes available for reuse.                         */
+        if (EXPECT(GC_collection_in_progress(), FALSE))
+          GC_mark_stack_remove_range((ptr_t)p, (ptr_t)p + sz);
+
         GC_freehblk(h);
         UNLOCK();
     }
@@ -726,6 +735,9 @@ GC_API void GC_CALL GC_free(void * p)
         if (nblocks > 1) {
           GC_large_allocd_bytes -= nblocks * HBLKSIZE;
         }
+        if (EXPECT(GC_collection_in_progress(), FALSE))
+          GC_mark_stack_remove_range((ptr_t)p, (ptr_t)p + sz);
+
         GC_freehblk(h);
     }
   }

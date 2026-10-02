@@ -2011,6 +2011,13 @@ GC_INNER struct hblk * GC_prev_block(struct hblk * h);
                         /* managed by GC, but may or may not be in use. */
                         /* Return 0 if there is no such block.          */
 GC_INNER void GC_mark_init(void);
+
+/* Remove the pending mark stack scans of [b, e) address range          */
+/* (e.g., to be called before the storage in the range could be reused  */
+/* or deallocated).  Assumes the allocator lock is held.  Does nothing  */
+/* if the mark stack is empty.                                          */
+GC_INNER void GC_mark_stack_remove_range(ptr_t b, ptr_t e);
+
 GC_INNER void GC_clear_marks(void);
                         /* Clear mark bits for all heap objects.        */
 GC_INNER void GC_invalidate_mark_state(void);
