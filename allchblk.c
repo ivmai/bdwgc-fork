@@ -737,6 +737,14 @@ GC_allochblk(size_t sz, int kind, unsigned flags/* IGNORE_OFF_PAGE or 0 */)
       ++start_list;
     }
     for (; start_list <= split_limit; ++start_list) {
+        /* Skip empty free lists without a call.  After a collection    */
+        /* that freed most blocks, these are coalesced into a few large */
+        /* ones, so allocating a single block would otherwise call      */
+        /* GC_allochblk_nth() for each of the (mostly empty) lists in   */
+        /* between.                                                     */
+        if (EXPECT(NULL == GC_hblkfreelist[start_list], TRUE))
+          continue;
+
         result = GC_allochblk_nth(sz, kind, flags, start_list, may_split);
         if (0 != result)
             break;
