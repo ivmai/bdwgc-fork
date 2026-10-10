@@ -23,8 +23,8 @@
 #  ifdef NACL
 #    include <sys/time.h>
 #  else
+#    include "private/darwin_semaphore.h"
 #    include <errno.h>
-#    include <semaphore.h>
 #    include <signal.h>
 #    include <time.h>
 #  endif /* !NACL */
