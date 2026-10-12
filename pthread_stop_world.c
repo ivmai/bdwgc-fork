@@ -457,10 +457,7 @@ static void suspend_restart_barrier(int n_live_threads)
           ABORT("sem_wait failed");
       }
     }
-#   ifdef GC_ASSERTIONS
-      sem_getvalue(&GC_suspend_ack_sem, &i);
-      GC_ASSERT(0 == i);
-#   endif
+    GC_ASSERT(0 == sem_getvalue(&GC_suspend_ack_sem, &i) && 0 == i);
 }
 
 # define WAIT_UNIT 3000 /* us */
@@ -479,7 +476,8 @@ static int resend_lost_signals(int n_live_threads,
       for (;;) {
         int ack_count;
 
-        sem_getvalue(&GC_suspend_ack_sem, &ack_count);
+        if (sem_getvalue(&GC_suspend_ack_sem, &ack_count) == -1)
+          ABORT("sem_getvalue failed");
         if (ack_count == n_live_threads)
           break;
         if (wait_usecs > RETRY_INTERVAL) {
@@ -493,7 +491,8 @@ static int resend_lost_signals(int n_live_threads,
 
           GC_COND_LOG_PRINTF("Resent %d signals after timeout, retry: %d\n",
                              newly_sent, retry);
-          sem_getvalue(&GC_suspend_ack_sem, &ack_count);
+          if (sem_getvalue(&GC_suspend_ack_sem, &ack_count) == -1)
+            ABORT("sem_getvalue failed");
           if (newly_sent < n_live_threads - ack_count) {
             WARN("Lost some threads while stopping or starting world?!\n", 0);
             n_live_threads = ack_count + newly_sent;
