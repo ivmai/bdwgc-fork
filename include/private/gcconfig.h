@@ -260,7 +260,9 @@ EXTERN_C_BEGIN
 #   define mach_type_known
 # endif
 # if defined(__NIOS2__) || defined(__NIOS2) || defined(__nios2__)
-#   define NIOS2 /* Altera NIOS2 */
+#   ifndef NIOS2
+#     define NIOS2
+#   endif
 #   define mach_type_known
 # endif
 # if defined(__or1k__)
