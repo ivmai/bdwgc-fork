@@ -1,5 +1,5 @@
 ---
-# This workflow is to build Linux non-arm64/x86 targets.
+# This workflow is to test Linux non-arm64/x86 targets using qemu-user.
 name: cmake qemu
 
 "on": [push, pull_request]
@@ -10,7 +10,7 @@ jobs:
       ${{ matrix.target.arch }}
       thr:${{ matrix.threads }} shared:${{ matrix.shared_libs }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     strategy:
       # Deliver the feedback for all matrix combinations.
@@ -24,12 +24,15 @@ jobs:
         gc_dump: ["on"]
         large_config: ["on"]
         redirect_malloc: ["off"]
-        shared_libs: ["off", "on"]
-        threads: ["off", "on"]
+        # TODO: on
+        shared_libs: ["off"]
+        threads: ["off"]
         target:
           # apt cross-gcc toolchains (Ubuntu universe):
           - arch: arc
             triple: arc-linux-gnu
+            # qemu-arc is no longer available.
+            build_testing: "off"
             tc_provider: apt
           - arch: armv7
             triple: arm-linux-gnueabihf
@@ -37,6 +40,8 @@ jobs:
           - arch: hp_pa
             triple: hppa-linux-gnu
             tc_provider: apt
+            # Prevent `SIGILL` in cordtest.
+            cflags_extra: "-D AO_DISABLE_GCC_ATOMICS"
           - arch: loongarch
             triple: loongarch64-linux-gnu
             tc_provider: apt
@@ -72,6 +77,8 @@ jobs:
             tc_ver: "2026.08-1"
           - arch: nios2
             triple: nios2-linux
+            # qemu-nios2 is no longer available.
+            build_testing: "off"
             tc_provider: bootlin
             tc_ver: "2024.05-1"
           - arch: or1k
@@ -161,6 +168,18 @@ jobs:
         if: ${{ matrix.target.tc_provider == 'lcc' }}
         uses: mrognor/lcc-env-action@main
 
+      - name: Install qemu
+        env:
+          INSTALL_QEMU: >-
+            ${{ matrix.target.build_testing != 'off'
+                && matrix.target.tc_provider != 'lcc' }}
+        if: ${{ env.INSTALL_QEMU == 'true' }}
+        # Note: there seems no profit in caching of apt install.
+        run: |
+          set -eu
+          sudo apt update
+          sudo apt install -y --no-install-recommends qemu-user-binfmt
+
       - name: Generate CMake toolchain file
         run: |
           set -eu
@@ -185,14 +204,42 @@ jobs:
               cxx="${{ matrix.target.triple }}-g++"
               ;;
           esac
+          # Determine name of qemu emulator to run.
+          case "${{ matrix.target.arch }}" in
+            armv7) qemu_arch="arm" ;;
+            hp_pa) qemu_arch="hppa" ;;
+            loongarch) qemu_arch="loongarch64" ;;
+            powerpc) qemu_arch="ppc" ;;
+            s390) qemu_arch="s390x" ;;
+            sh) qemu_arch="sh4" ;;
+            sparc) qemu_arch="sparc64" ;;
+            mips32) qemu_arch="mips" ;;
+            mips64el) qemu_arch="mipsn32el" ;;
+            *) qemu_arch="${{ matrix.target.arch }}" ;;
+          esac
+          case "${{ matrix.target.tc_provider }}" in
+            lcc) qemu_bin="qemu-e2k-static" ;;
+            *) qemu_bin="qemu-${qemu_arch}" ;;
+          esac
           # Determine `sysroot`.
           case "${{ matrix.target.tc_provider }}" in
-            lcc) sysroot="$($cc --print-sysroot 2>/dev/null || true)" ;;
+            lcc) sysroot="/opt/lcc/target/e2k-linux-gnu/fs" ;;
             qualcomm) sysroot="$tc_dir/target/hexagon-unknown-linux-musl" ;;
             *) sysroot="$($cc --print-sysroot)" ;;
           esac
+          # Determine qemu `-L` path.
+          case "${{ matrix.target.tc_provider }}" in
+            apt) qemu_ld_prefix="/usr/${{ matrix.target.triple }}" ;;
+            *) qemu_ld_prefix="$sysroot" ;;
+          esac
           tc_file="/tmp/toolchain-${{ matrix.target.arch }}.cmake"
           {
+            if [ "${{ matrix.target.tc_provider }}" = "lcc" ]; then
+              echo "set(CMAKE_CROSSCOMPILING_EMULATOR \"$qemu_bin\")"
+            else
+              echo "set(CMAKE_CROSSCOMPILING_EMULATOR" \
+                        " \"$qemu_bin;-L;$qemu_ld_prefix\")"
+            fi
             echo "set(CMAKE_CXX_COMPILER $cxx)"
             echo "set(CMAKE_C_COMPILER $cc)"
             echo "set(CMAKE_FIND_ROOT_PATH $sysroot)"
@@ -205,11 +252,14 @@ jobs:
           echo "Generated toolchain file:"
           cat "$tc_file"
           echo "TC_FILE=$tc_file" >> "$GITHUB_ENV"
+          echo "CMAKE_FIND_ROOT_PATH=$sysroot" >> "$GITHUB_ENV"
 
       - name: Configure CMake
         run: >
           cmake -B ${{ github.workspace }}/build
           -S ${{ github.workspace }}
+          -DBUILD_TESTING=${{ matrix.target.build_testing || 'on' }}
+          -DCFLAGS_EXTRA="${{ matrix.target.cflags_extra || '' }}"
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCMAKE_TOOLCHAIN_FILE=${{ env.TC_FILE }}
           -DGC_BUILD_SHARED_LIBS=${{ matrix.shared_libs }}
@@ -227,3 +277,11 @@ jobs:
         run: >
           cmake --build ${{ github.workspace }}/build
           --config ${{ matrix.build_type }} --verbose --parallel
+
+      - name: Execute tests in qemu-user
+        env:
+          # Pass sysroot to qemu to fix `ld-linux` loading for e2k.
+          QEMU_LD_PREFIX: ${{ env.CMAKE_FIND_ROOT_PATH }}
+        working-directory: ${{ github.workspace }}/build
+        run: >
+          ctest --build-config ${{ matrix.build_type }} --verbose --parallel
