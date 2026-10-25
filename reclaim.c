@@ -666,7 +666,10 @@ GC_INNER void GC_start_reclaim(GC_bool report_if_found)
         struct hblk ** rlist = GC_obj_kinds[kind].ok_reclaim_list;
         GC_bool should_clobber = (GC_obj_kinds[kind].ok_descriptor != 0);
 
-        if (rlist == 0) continue;       /* This kind not used.  */
+        /* Note: the free lists should be cleared even if the reclaim   */
+        /* list is not allocated yet, as GC_generic_malloc_many() does  */
+        /* not create it but GC_free() may still put objects of the     */
+        /* kind on them.                                                */
         if (!report_if_found) {
             void **fop;
             void **lim = &(GC_obj_kinds[kind].ok_freelist[MAXOBJGRANULES+1]);
@@ -683,7 +686,8 @@ GC_INNER void GC_start_reclaim(GC_bool report_if_found)
             }
         } /* otherwise free list objects are marked,    */
           /* and it's safe to leave them.               */
-        BZERO(rlist, (MAXOBJGRANULES + 1) * sizeof(void *));
+        if (rlist != NULL)
+          BZERO(rlist, (MAXOBJGRANULES + 1) * sizeof(void *));
       }
 
 
