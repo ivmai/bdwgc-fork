@@ -4752,8 +4752,7 @@ STATIC void *GC_mprotect_thread(void *arg)
   /* Even if this doesn't get updated property, it isn't really a problem. */
   STATIC int GC_sigbus_count = 0;
 
-  STATIC void GC_darwin_sigbus(int num, siginfo_t *sip GC_ATTR_UNUSED,
-                               void *context GC_ATTR_UNUSED)
+  STATIC void GC_darwin_sigbus(int num)
   {
     if (num != SIGBUS)
       ABORT("Got a non-sigbus signal in the sigbus handler");
@@ -4863,7 +4862,7 @@ GC_INNER GC_bool GC_dirty_init(void)
 # ifdef BROKEN_EXCEPTION_HANDLING
     {
       struct sigaction sa, oldsa;
-      sa.sa_handler = (SIG_HNDLR_PTR)GC_darwin_sigbus;
+      sa.sa_handler = GC_darwin_sigbus;
       sigemptyset(&sa.sa_mask);
       sa.sa_flags = SA_RESTART|SA_SIGINFO;
       /* sa.sa_restorer is deprecated and should not be initialized. */
