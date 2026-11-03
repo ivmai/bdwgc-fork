@@ -1505,6 +1505,23 @@ struct _GC_arrays {
 # define GC_objects_are_marked GC_arrays._objects_are_marked
   GC_bool _objects_are_marked;
                 /* Are there collectible marked objects in the heap?    */
+
+# ifdef ENABLE_DISCLAIM
+    /* Whether any kind with ok_mark_unconditionally set is ever registered. */
+#   define GC_has_mark_uncond_kinds GC_arrays._has_mark_uncond_kinds
+    GC_bool _has_mark_uncond_kinds;
+
+  /* Whether the unconditional-marking pass over the heap blocks (of    */
+  /* the kinds with ok_mark_unconditionally set) has to be redone       */
+  /* before rescan of the marked objects.  Set whenever the pushed      */
+  /* content of the mark stack is discarded (e.g., upon mark stack      */
+  /* overflow or a fault during marking); used by GC_mark_some() only   */
+  /* if GC_has_mark_uncond_kinds is set; cleared when the pass is       */
+  /* completed.                                                         */
+#   define GC_uncond_rescan_needed GC_arrays._uncond_rescan_needed
+    GC_bool _uncond_rescan_needed;
+# endif
+
 # ifdef ENABLE_TRACE
 #   define GC_trace_addr GC_arrays._trace_addr
     ptr_t _trace_addr;
@@ -1997,10 +2014,18 @@ GC_INNER void GC_mark_init(void);
 GC_INNER void GC_clear_marks(void);
                         /* Clear mark bits for all heap objects.        */
 GC_INNER void GC_invalidate_mark_state(void);
-                                /* Tell the marker that marked          */
-                                /* objects may point to unmarked        */
-                                /* ones, and roots may point to         */
-                                /* unmarked objects.  Reset mark stack. */
+                        /* Tell the marker that marked objects may      */
+                        /* point to unmarked ones, and roots may point  */
+                        /* to unmarked objects.  Switch the mark phase  */
+                        /* to MS_INVALID and reset the mark stack.      */
+                        /* Also, if ENABLE_DISCLAIM is defined, request */
+                        /* the unconditional-marking pass to be redone  */
+                        /* before the rescan of the marked objects.     */
+                        /* Note: this does not restart the heap scan;   */
+                        /* callers are responsible for resetting        */
+                        /* GC_scan_ptr where a full rescan of the heap  */
+                        /* is required (as done on the exception and    */
+                        /* mark-stack overflow paths).                  */
 GC_INNER GC_bool GC_mark_some(ptr_t cold_gc_frame);
                         /* Perform about one page of marking            */
                         /* work of whatever kind is needed.  Returns    */
