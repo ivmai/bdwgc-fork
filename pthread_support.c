@@ -854,6 +854,11 @@ GC_API void GC_CALL GC_register_altstack(void *stack, GC_word stack_size,
 
 #ifdef CAN_HANDLE_FORK
 
+/* Whether fork() is called from a thread registered in the collector.  */
+static GC_bool forker_thread_registered;
+
+STATIC void GC_register_my_detached_thread(void);
+
   /* Prevent TSan false positive about the race during items removal    */
   /* from GC_threads.  (The race cannot happen since only one thread    */
   /* survives in the child.)                                            */
@@ -881,7 +886,8 @@ STATIC void GC_remove_all_threads_but_me(void)
       for (p = GC_threads[hv]; 0 != p; p = next) {
         next = p -> next;
         if (THREAD_EQUAL(p -> id, GC_parent_pthread_self)
-            && me == NULL) { /* ignore dead threads with the same id */
+            && me == NULL && !(p -> flags & FINISHED)) {
+          /* Ignore dead threads with the same id.  */
           me = p;
           p -> next = 0;
         } else {
@@ -906,8 +912,19 @@ STATIC void GC_remove_all_threads_but_me(void)
       store_to_threads_table(hv, NULL);
     }
 
-    if (NULL == me)
-      return; /* fork() is called from an unregistered thread */
+    if (NULL == me) {
+      if (!forker_thread_registered)
+        return; /* fork() is called from an unregistered thread */
+
+      /* The registration entry of the thread which called fork() has   */
+      /* been lost (e.g., removed because of a race caused by a thread  */
+      /* id reuse).  Re-register the current thread (the only one which */
+      /* survived the fork).  This is safe because fork_prepare_proc()  */
+      /* has already waited for the collection completion, so the heap  */
+      /* is in a quiescent state.                                       */
+      GC_register_my_detached_thread();
+      return;
+    }
 
     /* Update pthread's id as it is not guaranteed to be the same   */
     /* between this (child) process and the parent one.             */
@@ -1259,8 +1276,10 @@ static void fork_prepare_proc(void)
       DISABLE_CANCEL(fork_cancel_state);
       GC_parent_pthread_self = pthread_self();
                 /* Following waits may include cancellation points. */
+      forker_thread_registered = FALSE;
       if (is_thread_registered_inner()) {
         /* fork() is called from a thread registered in the collector. */
+        forker_thread_registered = TRUE;
         GC_wait_for_gc_completion(TRUE);
       }
 #     if defined(PARALLEL_MARK)
@@ -2172,6 +2191,26 @@ STATIC GC_thread GC_register_my_thread_inner(const struct GC_stack_base *sb,
 #   endif
     return me;
 }
+
+#if defined(CAN_HANDLE_FORK)
+  /* Get the stack base of the current thread, register the thread in   */
+  /* the collector as a detached one and initialize its thread-local    */
+  /* free lists.                                                        */
+  STATIC void GC_register_my_detached_thread(void)
+  {
+    GC_thread me;
+    struct GC_stack_base sb;
+
+    if (GC_get_stack_base(&sb) != GC_SUCCESS)
+      ABORT("Failed to get thread stack base");
+    me = GC_register_my_thread_inner(&sb, pthread_self());
+    /* Treat as detached (pointer result is not needed). */
+    me -> flags |= DETACHED;
+#    ifdef THREAD_LOCAL_ALLOC
+    GC_init_thread_local(&(me -> tlfs));
+#    endif
+  }
+#endif
 
 GC_API void GC_CALL GC_allow_register_threads(void)
 {

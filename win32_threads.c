@@ -1173,6 +1173,11 @@ GC_API void * GC_CALL GC_get_my_stackbottom(struct GC_stack_base *sb)
 #ifdef CAN_HANDLE_FORK
     /* Similar to that in pthread_support.c but also rehashes the table */
     /* since hash map key (thread_id) differs from that in the parent.  */
+
+    static GC_bool forker_thread_registered;
+
+    STATIC void GC_register_my_detached_thread(void);
+
     STATIC void GC_remove_all_threads_but_me(void)
     {
       int hv;
@@ -1187,7 +1192,8 @@ GC_API void * GC_CALL GC_get_my_stackbottom(struct GC_stack_base *sb)
         for (p = GC_threads[hv]; 0 != p; p = next) {
           next = p -> tm.next;
           if (THREAD_EQUAL(p -> pthread_id, pthread_id)
-              && me == NULL) { /* ignore dead threads with the same id */
+              && me == NULL && (p -> flags & FINISHED) == 0) {
+            /* Ignore dead threads with the same id.    */
             me = p;
             p -> tm.next = 0;
           } else {
@@ -1205,8 +1211,14 @@ GC_API void * GC_CALL GC_get_my_stackbottom(struct GC_stack_base *sb)
         GC_threads[hv] = NULL;
       }
 
-      if (NULL == me)
-        return; /* fork() is called from an unregistered thread */
+      if (NULL == me) {
+        if (!forker_thread_registered)
+          return; /* fork() is called from an unregistered thread */
+
+        /* See the comment in pthread_support.c.    */
+        GC_register_my_detached_thread();
+        return;
+      }
 
       /* Put "me" back to GC_threads.   */
       thread_id = GetCurrentThreadId(); /* differs from that in parent */
@@ -1243,8 +1255,10 @@ GC_API void * GC_CALL GC_get_my_stackbottom(struct GC_stack_base *sb)
     static void fork_prepare_proc(void)
     {
       LOCK();
+      forker_thread_registered = FALSE;
       if (is_thread_registered_inner()) {
         /* fork() is called from a thread registered in the collector. */
+        forker_thread_registered = TRUE;
         GC_wait_for_gc_completion(TRUE);
       }
 #     ifdef PARALLEL_MARK
@@ -3113,6 +3127,31 @@ GC_INNER void GC_thr_init(void)
   GC_register_my_thread_inner(&sb, GC_main_thread);
 }
 
+#if defined(CAN_HANDLE_FORK) || !defined(GC_NO_THREADS_DISCOVERY)
+  /* Get the stack base of the current thread, register the thread in   */
+  /* the collector as a detached one and initialize its thread-local    */
+  /* free lists.                                                        */
+  /* Note: the allocator lock is not held if called from GC_DllMain().  */
+  STATIC void GC_register_my_detached_thread(void)
+  {
+    GC_thread me;
+    struct GC_stack_base sb;
+
+    if (GC_get_stack_base(&sb) != GC_SUCCESS)
+      ABORT("Failed to get thread stack base");
+    me = GC_register_my_thread_inner(&sb, GetCurrentThreadId());
+#    ifdef GC_PTHREADS
+    /* Treat as detached (pointer result is not needed). */
+    me -> flags |= DETACHED;
+#    endif
+#    ifdef THREAD_LOCAL_ALLOC
+    GC_init_thread_local(&(me -> tlfs));
+#    else
+    (void)me;
+#    endif
+  }
+#endif
+
 #ifdef GC_PTHREADS
 
   struct start_info {
@@ -3344,8 +3383,6 @@ GC_INNER void GC_thr_init(void)
   BOOL WINAPI GC_DllMain(HINSTANCE inst GC_ATTR_UNUSED, ULONG reason,
                          LPVOID reserved)
   {
-      DWORD thread_id;
-
       /* Note that GC_use_threads_discovery should be called by the     */
       /* client application at start-up to activate automatic thread    */
       /* registration (it is the default GC behavior);                  */
@@ -3365,16 +3402,9 @@ GC_INNER void GC_thr_init(void)
         /* FALLTHRU */
        case DLL_PROCESS_ATTACH:
         /* This may run with the collector uninitialized. */
-        thread_id = GetCurrentThreadId();
-        if (parallel_initialized && GC_main_thread != thread_id) {
-            struct GC_stack_base sb;
+        if (parallel_initialized && GetCurrentThreadId() != GC_main_thread) {
             /* Don't lock here. */
-#           ifdef GC_ASSERTIONS
-              int sb_result =
-#           endif
-                        GC_get_stack_base(&sb);
-            GC_ASSERT(sb_result == GC_SUCCESS);
-            GC_register_my_thread_inner(&sb, thread_id);
+            GC_register_my_detached_thread();
         } /* o.w. we already did it during GC_thr_init, called by GC_init */
         break;
 
