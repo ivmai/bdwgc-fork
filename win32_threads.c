@@ -1243,17 +1243,15 @@ GC_API void * GC_CALL GC_get_my_stackbottom(struct GC_stack_base *sb)
     static void fork_prepare_proc(void)
     {
       LOCK();
-#     ifdef PARALLEL_MARK
-        if (GC_parallel)
-          GC_wait_for_reclaim();
-#     endif
       if (is_thread_registered_inner()) {
         /* fork() is called from a thread registered in the collector. */
         GC_wait_for_gc_completion(TRUE);
       }
 #     ifdef PARALLEL_MARK
-        if (GC_parallel)
+        if (GC_parallel) {
+          GC_wait_for_reclaim();
           GC_acquire_mark_lock();
+        }
 #     endif
     }
 
