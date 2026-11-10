@@ -900,7 +900,8 @@ GC_get_stack_base(struct GC_stack_base *sb)
 # if defined(NEED_FIND_LIMIT) \
      || (defined(UNIX_LIKE) && !defined(NO_DEBUGGING)) \
      || (defined(USE_PROC_FOR_LIBRARIES) && defined(THREADS)) \
-     || (defined(WRAP_MARK_SOME) && defined(__GNUC__))
+     || (defined(WRAP_MARK_SOME) && defined(__GNUC__) && !defined(MSWIN32) \
+         && !defined(MSWINCE))
 
     typedef void (*GC_fault_handler_t)(int);
 
@@ -974,22 +975,58 @@ GC_get_stack_base(struct GC_stack_base *sb)
 
     GC_INNER JMP_BUF GC_jmp_buf;
 
-    STATIC void GC_fault_handler(int sig GC_ATTR_UNUSED)
-    {
+#   if (defined(MSWIN32) || defined(MSWINCE)) && defined(__GNUC__)
+      static PVOID fault_handler_veh;
+      static DWORD fault_handler_thread_id;
+      static unsigned fault_handler_nesting;
+
+      /* The C-runtime emulation of SIGSEGV delivery does not work for  */
+      /* threads started with CreateThread() directly (the runtime      */
+      /* translates hardware exceptions to signals only for the thread  */
+      /* which runs main()), thus making the fault handler installed    */
+      /* via signal() useless for such threads.  Use a first-chance     */
+      /* vectored exception handler instead; it is invoked on the       */
+      /* faulting thread regardless of how it was started.              */
+      static LONG CALLBACK
+      fault_handler_win32(PEXCEPTION_POINTERS ep)
+      {
+        if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION
+            && GetCurrentThreadId() == fault_handler_thread_id)
+          LONGJMP(GC_jmp_buf, 1);
+        return EXCEPTION_CONTINUE_SEARCH;
+      }
+#   else
+      STATIC void GC_fault_handler(int sig GC_ATTR_UNUSED)
+      {
         LONGJMP(GC_jmp_buf, 1);
-    }
+      }
+#   endif
 
     GC_INNER void GC_setup_temporary_fault_handler(void)
     {
         /* Handler is process-wide, so this should only happen in       */
         /* one thread at a time.                                        */
         GC_ASSERT(I_HOLD_LOCK());
+#     if (defined(MSWIN32) || defined(MSWINCE)) && defined(__GNUC__) \
+         && defined(WRAP_MARK_SOME)
+        fault_handler_thread_id = GetCurrentThreadId();
+        if (fault_handler_nesting++ == 0) {
+          fault_handler_veh = AddVectoredExceptionHandler(1 /* first */,
+                                                fault_handler_win32);
+        }
+#     else
         GC_set_and_save_fault_handler(GC_fault_handler);
+#     endif
     }
 
     GC_INNER void GC_reset_fault_handler(void)
     {
-#       if defined(SUNOS5SIGS) || defined(IRIX5) || defined(OSF1) \
+#       if (defined(MSWIN32) || defined(MSWINCE)) && defined(__GNUC__) \
+           && defined(WRAP_MARK_SOME)
+          GC_ASSERT(fault_handler_nesting > 0);
+          if (--fault_handler_nesting == 0)
+              RemoveVectoredExceptionHandler(fault_handler_veh);
+#       elif defined(SUNOS5SIGS) || defined(IRIX5) || defined(OSF1) \
            || defined(HAIKU) || defined(HURD) || defined(FREEBSD) \
            || defined(NETBSD) || defined(OPENBSD) || defined(SERENITY)
           (void) sigaction(SIGSEGV, &old_segv_act, 0);
