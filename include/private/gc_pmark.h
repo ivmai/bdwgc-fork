@@ -440,7 +440,9 @@ GC_INNER mse * GC_mark_from(mse * top, mse * bottom, mse *limit);
     while (!GC_mark_stack_empty()) MARK_FROM_MARK_STACK(); \
     if (GC_mark_state != MS_NONE) { \
         GC_set_mark_bit(real_ptr); \
+        GC_setup_fault_handler_per_gc(); \
         while (!GC_mark_some((ptr_t)0)) { /* empty */ } \
+        GC_reset_fault_handler_per_gc(); \
     } \
   } while (0)
 

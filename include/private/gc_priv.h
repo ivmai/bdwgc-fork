@@ -3271,6 +3271,20 @@ GC_INNER void *GC_store_debug_info_inner(void *p, word sz, const char *str,
   GC_INNER void GC_reset_fault_handler(void);
 #endif /* NEED_FIND_LIMIT || USE_PROC_FOR_LIBRARIES */
 
+#if defined(MSWIN32) && defined(__GNUC__) && defined(WRAP_MARK_SOME)
+  /* VEH registration may acquire OS locks, so callers of               */
+  /* GC_mark_some() should register it before stopping the world (when  */
+  /* applicable).  Inside GC_mark_some(), only the faulting-thread flag */
+  /* is updated.                                                        */
+  GC_INNER void GC_setup_fault_handler_per_gc(void);
+  /* Unregister VEH after the last GC_mark_some() call (after the world */
+  /* is restarted, if it was stopped).                                  */
+  GC_INNER void GC_reset_fault_handler_per_gc(void);
+#else
+# define GC_setup_fault_handler_per_gc() (void)0
+# define GC_reset_fault_handler_per_gc() (void)0
+#endif
+
 /* Some convenience macros for cancellation support. */
 #ifdef CANCEL_SAFE
 # if defined(GC_ASSERTIONS) \

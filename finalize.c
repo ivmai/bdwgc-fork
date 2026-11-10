@@ -344,9 +344,11 @@ GC_API int GC_CALL GC_unregister_disappearing_link(void * * link)
     }
     GC_set_mark_bit(p);
     if (GC_mark_state != MS_NONE) {
+      GC_setup_fault_handler_per_gc();
       while (!GC_mark_some(0)) {
         /* Empty. */
       }
+      GC_reset_fault_handler_per_gc();
     }
   }
 
