@@ -990,7 +990,9 @@ GC_get_stack_base(struct GC_stack_base *sb)
       static LONG CALLBACK
       fault_handler_win32(PEXCEPTION_POINTERS ep)
       {
-        if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION
+        DWORD ec = ep -> ExceptionRecord -> ExceptionCode;
+
+        if (IS_WRAP_MARK_EXCEPTION(ec)
             && GetCurrentThreadId() == fault_handler_thread_id)
           LONGJMP(GC_jmp_buf, 1);
         return EXCEPTION_CONTINUE_SEARCH;
