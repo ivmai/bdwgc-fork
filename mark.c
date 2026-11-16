@@ -1989,12 +1989,23 @@ STATIC struct hblk * GC_push_next_marked(struct hblk *h)
 }
 
 #ifndef GC_DISABLE_INCREMENTAL
-  /* Identical to above, but mark only from dirty pages.        */
+  /* Identical to above, but mark only from dirty pages (unless the */
+  /* incremental mode was turned off in the course of the ongoing   */
+  /* collection).                                                   */
   STATIC struct hblk * GC_push_next_marked_dirty(struct hblk *h)
   {
     hdr * hhdr = HDR(h);
 
-    if (!GC_incremental) ABORT("Dirty bits not set up");
+    if (EXPECT(!GC_incremental, FALSE)) {
+        /* The incremental mode could be turned off (e.g. by a fork */
+        /* handler) while the current collection is still in        */
+        /* progress.  In this case, simply push objects from all    */
+        /* marked pages (as done by a fully non-incremental         */
+        /* collection) instead of aborting.                         */
+        GC_COND_LOG_PRINTF(
+                "Dirty bits not set up: scanning all marked pages\n");
+        return GC_push_next_marked(h);
+    }
     for (;;) {
         if (EXPECT(IS_FORWARDING_ADDR_OR_NIL(hhdr)
                    || HBLK_IS_FREE(hhdr), FALSE)) {
