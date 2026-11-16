@@ -777,6 +777,23 @@ GC_API int GC_CALL GC_is_init_called(void)
 #endif
 
 #ifndef DONT_USE_ATEXIT
+# if defined(GC_WIN32_THREADS) && !defined(MSWINCE)
+    /* Is the process shutdown in progress? */
+    static GC_bool is_win32_process_exiting(void)
+    {
+        /* RtlDllShutdownInProgress() is not declared in some SDK headers. */
+        HMODULE hNtDll = GetModuleHandle(TEXT("ntdll.dll"));
+
+        if (hNtDll) {
+            FARPROC pfn = GetProcAddress(hNtDll, "RtlDllShutdownInProgress");
+
+            if (pfn)
+                return (*(BOOLEAN(WINAPI *)(void))(word)pfn)() != 0;
+        }
+        return FALSE;
+    }
+# endif
+
 # if !defined(PCR) && !defined(SMALL_CONFIG)
     /* A dedicated variable to avoid a garbage collection on abort.     */
     /* GC_find_leak cannot be used for this purpose as otherwise        */
@@ -801,6 +818,14 @@ GC_API int GC_CALL GC_is_init_called(void)
         /* It should also prevent "Collecting from unknown thread"  */
         /* abort in GC_push_all_stacks().                           */
         if (!GC_is_main_thread() || !GC_thread_is_registered()) return;
+#     endif
+#     if defined(GC_WIN32_THREADS) && !defined(MSWINCE)
+        /* If ExitProcess() has been called (i.e. LdrShutdownProcess    */
+        /* is in progress), then all threads other than the current     */
+        /* one might have already been terminated at arbitrary points   */
+        /* and, thus, it is unsafe to run a collection as a GC lock     */
+        /* (e.g., mark mutex) might be orphaned.                        */
+        if (is_win32_process_exiting()) return;
 #     endif
       GC_gcollect();
     }
