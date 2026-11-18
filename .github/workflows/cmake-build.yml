@@ -82,3 +82,13 @@ jobs:
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       # Execute tests defined by the CMake configuration.
       run: ctest --build-config ${{ matrix.build_type }} --verbose --parallel 8
+
+    - name: Print tests output (Windows)
+      # The collector output goes to .gc.log files in Windows GUI apps.
+      if: ${{ always() && runner.os == 'Windows' }}
+      shell: bash
+      run: |
+        find . -name '*.gc.log' | while read -r file; do
+          echo "Contents of $file:"
+          cat "$file"
+        done
