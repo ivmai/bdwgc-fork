@@ -879,18 +879,15 @@ GC_API int GC_CALL GC_register_my_thread(const struct GC_stack_base *sb)
 }
 
 #ifdef GC_DISABLE_INCREMENTAL
-# define GC_wait_for_gc_completion(wait_for_all) (void)(wait_for_all)
+# define GC_wait_for_gc_completion() (void)0
 #else
 /* Similar to that in pthread_support.c.        */
-STATIC void GC_wait_for_gc_completion(GC_bool wait_for_all)
+STATIC void GC_wait_for_gc_completion(void)
 {
   GC_ASSERT(I_HOLD_LOCK());
-  if (GC_incremental && GC_collection_in_progress()) {
-    word old_gc_no = GC_gc_no;
-
+  while (GC_incremental && GC_collection_in_progress()) {
     /* Make sure that no part of our stack is still on the mark stack,  */
     /* since it's about to be unmapped.                                 */
-    do {
       ENTER_GC();
       GC_in_thread_creation = TRUE;
       GC_collect_a_little_inner(1);
@@ -900,8 +897,6 @@ STATIC void GC_wait_for_gc_completion(GC_bool wait_for_all)
       UNLOCK();
       Sleep(0); /* yield */
       LOCK();
-    } while (GC_incremental && GC_collection_in_progress()
-             && (wait_for_all || old_gc_no == GC_gc_no));
   }
 }
 #endif /* !GC_DISABLE_INCREMENTAL */
@@ -929,7 +924,7 @@ GC_API int GC_CALL GC_unregister_my_thread(void)
     DWORD thread_id = GetCurrentThreadId();
 
     LOCK();
-    GC_wait_for_gc_completion(FALSE);
+    GC_wait_for_gc_completion();
 #   if defined(THREAD_LOCAL_ALLOC) || defined(GC_PTHREADS)
       me = GC_lookup_thread_inner(thread_id);
       CHECK_LOOKUP_MY_THREAD(me);
@@ -1259,7 +1254,7 @@ GC_API void * GC_CALL GC_get_my_stackbottom(struct GC_stack_base *sb)
       if (is_thread_registered_inner()) {
         /* fork() is called from a thread registered in the collector. */
         forker_thread_registered = TRUE;
-        GC_wait_for_gc_completion(TRUE);
+        GC_wait_for_gc_completion();
       }
 #     ifdef PARALLEL_MARK
         if (GC_parallel) {
@@ -2320,7 +2315,7 @@ GC_INNER void GC_get_next_stack(char *start, char *limit,
       ASSERT_CANCEL_DISABLED();
       if (available_markers_m1 <= 0 || GC_parallel) return;
                 /* Skip if parallel markers disabled or already started. */
-      GC_wait_for_gc_completion(TRUE);
+      GC_wait_for_gc_completion();
 
 #     ifdef CAN_HANDLE_FORK
         /* Reset mark_cv state after forking (as in pthread_support.c). */
@@ -2490,7 +2485,7 @@ GC_INNER void GC_get_next_stack(char *start, char *limit,
       GC_ASSERT(I_HOLD_LOCK());
       ASSERT_CANCEL_DISABLED();
       if (available_markers_m1 <= 0 || GC_parallel) return;
-      GC_wait_for_gc_completion(TRUE);
+      GC_wait_for_gc_completion();
 
       GC_ASSERT(GC_fl_builder_count == 0);
       /* Initialize GC_marker_cv[] fully before starting the    */
@@ -3315,7 +3310,7 @@ GC_INNER void GC_thr_init(void)
 #   endif
 
     LOCK();
-    GC_wait_for_gc_completion(FALSE);
+    GC_wait_for_gc_completion();
 #   if defined(THREAD_LOCAL_ALLOC)
       GC_ASSERT(GC_getspecific(GC_thread_key) == &me->tlfs);
       GC_destroy_thread_local(&(me->tlfs));

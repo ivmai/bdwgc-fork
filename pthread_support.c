@@ -458,7 +458,7 @@ static int available_markers_m1 = 0;
   static pthread_cond_t mark_cv = PTHREAD_COND_INITIALIZER;
 #endif
 
-STATIC void GC_wait_for_gc_completion(GC_bool wait_for_all);
+STATIC void GC_wait_for_gc_completion(void);
 
 GC_INNER void GC_start_mark_threads_inner(void)
 {
@@ -475,7 +475,7 @@ GC_INNER void GC_start_mark_threads_inner(void)
       /* starting).                                                 */
       return;
     }
-    GC_wait_for_gc_completion(TRUE);
+    GC_wait_for_gc_completion();
 
 #   ifdef CAN_HANDLE_FORK
       /* Initialize mark_cv (for the first time), or cleanup its value  */
@@ -1185,12 +1185,10 @@ STATIC void GC_remove_all_threads_but_me(void)
 # define collection_in_progress() GC_collection_in_progress()
 #endif
 
-/* We hold the GC lock.  Wait until an in-progress GC has finished.     */
+/* We hold the GC lock.  Wait until no collection is in progress.       */
 /* Repeatedly RELEASES GC LOCK in order to wait.                        */
-/* If wait_for_all is true, then we exit with the GC lock held and no   */
-/* collection in progress; otherwise we just wait for the current GC    */
-/* to finish.                                                           */
-STATIC void GC_wait_for_gc_completion(GC_bool wait_for_all)
+/* We exit with the GC lock held.                                       */
+STATIC void GC_wait_for_gc_completion(void)
 {
     DCL_LOCK_STATE;
 #   if !defined(THREAD_SANITIZER) || !defined(CAN_CALL_ATFORK)
@@ -1199,13 +1197,9 @@ STATIC void GC_wait_for_gc_completion(GC_bool wait_for_all)
       GC_ASSERT(I_HOLD_LOCK());
 #   endif
     ASSERT_CANCEL_DISABLED();
-    if (GC_incremental && collection_in_progress()) {
-        word old_gc_no = GC_gc_no;
-
+    while (GC_incremental && collection_in_progress()) {
         /* Make sure that no part of our stack is still on the mark stack, */
         /* since it's about to be unmapped.                                */
-        while (GC_incremental && collection_in_progress()
-               && (wait_for_all || old_gc_no == GC_gc_no)) {
             ENTER_GC();
             GC_in_thread_creation = TRUE;
             GC_collect_a_little_inner(1);
@@ -1214,7 +1208,6 @@ STATIC void GC_wait_for_gc_completion(GC_bool wait_for_all)
             UNLOCK();
             sched_yield();
             LOCK();
-        }
     }
 }
 
@@ -1280,7 +1273,7 @@ static void fork_prepare_proc(void)
       if (is_thread_registered_inner()) {
         /* fork() is called from a thread registered in the collector. */
         forker_thread_registered = TRUE;
-        GC_wait_for_gc_completion(TRUE);
+        GC_wait_for_gc_completion();
       }
 #     if defined(PARALLEL_MARK)
         if (GC_parallel) {
@@ -1991,9 +1984,10 @@ GC_API int GC_CALL GC_unregister_my_thread(void)
 
     LOCK();
     DISABLE_CANCEL(cancel_state);
-    /* Wait for any GC that may be marking from our stack to    */
-    /* complete before we remove this thread.                   */
-    GC_wait_for_gc_completion(FALSE);
+    /* Wait until no collection is in progress (and, hence, no part     */
+    /* of our stack is still on the mark stack) before we remove this   */
+    /* thread.                                                          */
+    GC_wait_for_gc_completion();
     me = GC_lookup_thread(self);
 #   ifdef DEBUG_THREADS
         GC_log_printf(
@@ -2023,7 +2017,7 @@ GC_INNER_PTHRSTART void GC_thread_exit_proc(void *arg)
 #   endif
     LOCK();
     DISABLE_CANCEL(cancel_state);
-    GC_wait_for_gc_completion(FALSE);
+    GC_wait_for_gc_completion();
     GC_unregister_my_thread_inner((GC_thread)arg);
     RESTORE_CANCEL(cancel_state);
     UNLOCK();
